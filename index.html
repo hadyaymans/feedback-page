@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <title>تقييم الخدمة</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:#f5f5f5; margin:0; }
+    .container { max-width:450px; margin:40px auto; background:#fff; padding:24px 20px; border-radius:12px; box-shadow:0 4px 16px rgba(0,0,0,.08); }
+    h1 { font-size:20px; text-align:center; margin:0 0 8px; }
+    p.subtitle { font-size:14px; text-align:center; color:#666; margin:0 0 20px; }
+    label { display:block; font-size:14px; margin-bottom:6px; }
+    input[type="text"], select { width:100%; padding:8px 10px; border:1px solid #ccc; border-radius:6px; font-size:14px; box-sizing:border-box; margin-bottom:14px; }
+    input[readonly]{ background:#f3f3f3; }
+    button { width:100%; padding:10px 0; border:none; border-radius:6px; font-size:15px; cursor:pointer; background:#007bff; color:#fff; }
+    button:hover { background:#0069d9; }
+    .msg { margin-top:16px; padding:14px; border-radius:10px; text-align:center; font-size:15px; display:none; }
+    .ok { background:#e8fff0; border:1px solid #8bd5a5; color:#2d7a4b; }
+    .err { background:#fff4e5; border:1px solid #f0c36d; color:#663f00; }
+    .small { font-size:12px; color:#777; margin-top:10px; text-align:center; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>تقييم الخدمة</h1>
+    <p class="subtitle">نرجو منك تقييم تجربتك معنا</p>
+
+    <div id="form-content">
+      <label for="case_no_display">رقم الحالة / البلاغ</label>
+      <input type="text" id="case_no_display" readonly />
+
+      <input type="hidden" id="case_no" />
+
+      <label for="is_resolved">هل تم حل المشكلة؟</label>
+      <select id="is_resolved" required>
+        <option value="">اختر من القائمة</option>
+        <option value="Yes">نعم</option>
+        <option value="No">لا</option>
+      </select>
+
+      <button id="submitBtn" type="button">إرسال التقييم</button>
+      <!-- <div class="small">سيتم إرسال التقييم بأمان دون الحاجة إلى VPN.</div> -->
+    </div>
+
+    <div id="success-box" class="msg ok">✔ شكراً لمساعدتنا في تحسين خدماتنا!</div>
+    <div id="error-box" class="msg err"></div>
+  </div>
+
+<script>
+(function () {
+  // ====== CONFIG ======
+  // Example: https://YOUR-FUNCTION-APP.azurewebsites.net/api/submit_feedback
+  var AZURE_FUNCTION_URL ="https://feedback-api.azurewebsites.net/api/submit_feedback";
+
+
+  // Read ?case_no= from URL
+  var params = new URLSearchParams(window.location.search);
+  var caseNo = params.get("case_no") || "";
+
+  document.getElementById("case_no_display").value = caseNo;
+  document.getElementById("case_no").value = caseNo;
+
+  var btn = document.getElementById("submitBtn");
+  var formContent = document.getElementById("form-content");
+  var successBox = document.getElementById("success-box");
+  var errorBox = document.getElementById("error-box");
+
+  function showError(msg) {
+    errorBox.textContent = msg;
+    errorBox.style.display = "block";
+  }
+
+  btn.addEventListener("click", function () {
+    errorBox.style.display = "none";
+    errorBox.textContent = "";
+
+    var isResolved = document.getElementById("is_resolved").value;
+
+    if (!caseNo) return showError("رقم الحالة غير موجود في الرابط (case_no).");
+    if (!isResolved) return showError("من فضلك اختر (نعم/لا).");
+
+    btn.disabled = true;
+    btn.textContent = "جاري الإرسال...";
+
+    fetch(AZURE_FUNCTION_URL, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ case_no: caseNo, is_resolved: isResolved })
+    })
+    .then(function (r) {
+      if (!r.ok) return r.text().then(function(t){ throw new Error(t || "Request failed"); });
+      return r.json();
+    })
+    .then(function () {
+      formContent.style.display = "none";
+      successBox.style.display = "block";
+    })
+    .catch(function () {
+      btn.disabled = false;
+      btn.textContent = "إرسال التقييم";
+      showError("تعذر إرسال التقييم حالياً. حاول مرة أخرى لاحقاً.");
+    });
+  });
+})();
+</script>
+</body>
+</html>
