@@ -1,25 +1,41 @@
+import json
+import time
+import uuid
+import os
 import azure.functions as func
-import logging
+from azure.data.tables import TableServiceClient
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        data = req.get_json()
+    except Exception:
+        return func.HttpResponse("Invalid JSON", status_code=400)
 
-@app.route(route="http_trigger")
-def http_trigger(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info('Python HTTP trigger function processed a request.')
+    case_no = (data.get("case_no") or "").strip()
+    is_resolved = (data.get("is_resolved") or "").strip()
 
-    name = req.params.get('name')
-    if not name:
-        try:
-            req_body = req.get_json()
-        except ValueError:
-            pass
-        else:
-            name = req_body.get('name')
+    if not case_no or is_resolved not in ("Yes", "No"):
+        return func.HttpResponse("Invalid data", status_code=400)
 
-    if name:
-        return func.HttpResponse(f"Hello, {name}. This HTTP triggered function executed successfully.")
-    else:
-        return func.HttpResponse(
-             "This HTTP triggered function executed successfully. Pass a name in the query string or in the request body for a personalized response.",
-             status_code=200
-        )
+    conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+    table_name = os.environ.get("FEEDBACK_TABLE", "CustomerFeedback")
+
+    service = TableServiceClient.from_connection_string(conn)
+    table = service.get_table_client(table_name)
+    table.create_table_if_not_exists()
+
+    entity = {
+        "PartitionKey": "feedback",
+        "RowKey": f"{int(time.time())}-{uuid.uuid4().hex}",
+        "case_no": case_no,
+        "is_resolved": is_resolved,
+        "synced": False,
+        "created_at": int(time.time())
+    }
+
+    table.create_entity(entity)
+
+    return func.HttpResponse(
+        json.dumps({"ok": True}),
+        mimetype="application/json"
+    )
