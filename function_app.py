@@ -18,8 +18,8 @@ def _cors_headers():
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     # Handle preflight
-    if req.method == "OPTIONS":
-        return func.HttpResponse("", status_code=204, headers=_cors_headers())
+    # if req.method == "OPTIONS":
+    #     return func.HttpResponse("", status_code=204, headers=_cors_headers())
 
     try:
         data = req.get_json()
