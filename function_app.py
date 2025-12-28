@@ -42,7 +42,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             headers=_cors_headers(),
         )
 
-    conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+    conn = os.environ.get("DefaultEndpointsProtocol=https;AccountName=feedbackstorage12;AccountKey=bJFnuQ8xdD4ZSOoe/4Na0fDElTlH+tKQvNxcTGYLXLOFXYQjusJMQqVwXBZ+rGBo0ai0zGCC3WP7+AStqRY3CA==;EndpointSuffix=core.windows.net")
     table_name = os.environ.get("FEEDBACK_TABLE", "CustomerFeedback")
 
     if not conn:
