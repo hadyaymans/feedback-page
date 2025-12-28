@@ -1,57 +1,76 @@
-import os
 import json
+import os
 import time
 import uuid
+
 import azure.functions as func
 from azure.data.tables import TableServiceClient
 
-app = func.FunctionApp()
 
-TABLE_NAME = os.environ.get("FEEDBACK_TABLE", "CustomerFeedback")
+def _cors_headers():
+    origin = os.environ.get("CORS_ORIGIN", "*")
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+    }
 
-def _json(status: int, payload: dict):
-    return func.HttpResponse(
-        body=json.dumps(payload, ensure_ascii=False),
-        status_code=status,
-        mimetype="application/json"
-    )
 
-@app.route(route="submit_feedback", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
-def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    # Handle preflight
+    if req.method == "OPTIONS":
+        return func.HttpResponse("", status_code=204, headers=_cors_headers())
+
     try:
         data = req.get_json()
     except Exception:
-        return _json(400, {"ok": False, "error": "Invalid JSON"})
+        return func.HttpResponse(
+            json.dumps({"ok": False, "error": "Invalid JSON"}),
+            status_code=400,
+            mimetype="application/json",
+            headers=_cors_headers(),
+        )
 
     case_no = (data.get("case_no") or "").strip()
     is_resolved = (data.get("is_resolved") or "").strip()
 
-    if not case_no:
-        return _json(400, {"ok": False, "error": "case_no is required"})
-    if is_resolved not in ("Yes", "No"):
-        return _json(400, {"ok": False, "error": "is_resolved must be Yes/No"})
+    if not case_no or is_resolved not in ("Yes", "No"):
+        return func.HttpResponse(
+            json.dumps({"ok": False, "error": "Invalid data"}),
+            status_code=400,
+            mimetype="application/json",
+            headers=_cors_headers(),
+        )
 
-    conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING=from your Storage Account → Access Keys")
-    if not conn_str:
-        return _json(500, {"ok": False, "error": "Missing AZURE_STORAGE_CONNECTION_STRING"})
+    conn = os.environ.get("DefaultEndpointsProtocol=https;AccountName=feedbackstorage12;AccountKey=bJFnuQ8xdD4ZSOoe/4Na0fDElTlH+tKQvNxcTGYLXLOFXYQjusJMQqVwXBZ+rGBo0ai0zGCC3WP7+AStqRY3CA==;EndpointSuffix=core.windows.net")
+    table_name = os.environ.get("FEEDBACK_TABLE", "CustomerFeedback")
 
-    # Connect to Table Storage
-    svc = TableServiceClient.from_connection_string(conn_str)
-    table = svc.get_table_client(TABLE_NAME)
+    if not conn:
+        return func.HttpResponse(
+            json.dumps({"ok": False, "error": "Missing AZURE_STORAGE_CONNECTION_STRING"}),
+            status_code=500,
+            mimetype="application/json",
+            headers=_cors_headers(),
+        )
+
+    service = TableServiceClient.from_connection_string(conn)
+    table = service.get_table_client(table_name)
     table.create_table_if_not_exists()
-
-    # RowKey should be unique
-    row_key = f"{int(time.time())}-{uuid.uuid4().hex}"
 
     entity = {
         "PartitionKey": "feedback",
-        "RowKey": row_key,
+        "RowKey": f"{int(time.time())}-{uuid.uuid4().hex}",
         "case_no": case_no,
         "is_resolved": is_resolved,
         "synced": False,
-        "created_at": int(time.time())
+        "created_at": int(time.time()),
     }
 
     table.create_entity(entity)
 
-    return _json(200, {"ok": True})
+    return func.HttpResponse(
+        json.dumps({"ok": True}),
+        status_code=200,
+        mimetype="application/json",
+        headers=_cors_headers(),
+    )
