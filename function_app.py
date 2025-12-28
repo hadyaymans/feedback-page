@@ -1,25 +1,83 @@
-import azure.functions as func
+import json
+import os
+import time
+import uuid
 import logging
+
+import azure.functions as func
+from azure.data.tables import TableServiceClient
+
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-@app.route(route="http_trigger")
-def http_trigger(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info('Python HTTP trigger function processed a request.')
 
-    name = req.params.get('name')
-    if not name:
-        try:
-            req_body = req.get_json()
-        except ValueError:
-            pass
-        else:
-            name = req_body.get('name')
+def cors_headers():
+    origin = os.environ.get("CORS_ORIGIN", "*")
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Max-Age": "86400",
+    }
 
-    if name:
-        return func.HttpResponse(f"Hello, {name}. This HTTP triggered function executed successfully.")
-    else:
+
+@app.route(route="submit_feedback", methods=["POST", "OPTIONS"])
+def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
+    # ✅ Preflight
+    if req.method == "OPTIONS":
+        return func.HttpResponse("", status_code=204, headers=cors_headers())
+
+    try:
+        data = req.get_json()
+    except Exception:
         return func.HttpResponse(
-             "This HTTP triggered function executed successfully. Pass a name in the query string or in the request body for a personalized response.",
-             status_code=200
+            json.dumps({"ok": False, "error": "Invalid JSON"}),
+            status_code=400,
+            mimetype="application/json",
+            headers=cors_headers(),
         )
+
+    case_no = (data.get("case_no") or "").strip()
+    is_resolved = (data.get("is_resolved") or "").strip()
+
+    if not case_no or is_resolved not in ("Yes", "No"):
+        return func.HttpResponse(
+            json.dumps({"ok": False, "error": "Invalid data"}),
+            status_code=400,
+            mimetype="application/json",
+            headers=cors_headers(),
+        )
+
+    conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+    table_name = os.environ.get("FEEDBACK_TABLE", "CustomerFeedback")
+
+    if not conn:
+        logging.error("Missing AZURE_STORAGE_CONNECTION_STRING in app settings")
+        return func.HttpResponse(
+            json.dumps({"ok": False, "error": "Server misconfigured"}),
+            status_code=500,
+            mimetype="application/json",
+            headers=cors_headers(),
+        )
+
+    service = TableServiceClient.from_connection_string(conn)
+    table = service.get_table_client(table_name)
+    table.create_table_if_not_exists()
+
+    entity = {
+        "PartitionKey": "feedback",
+        "RowKey": f"{int(time.time())}-{uuid.uuid4().hex}",
+        "case_no": case_no,
+        "is_resolved": is_resolved,
+        "synced": False,
+        "created_at": int(time.time()),
+    }
+
+    table.create_entity(entity)
+
+    return func.HttpResponse(
+        json.dumps({"ok": True}),
+        status_code=200,
+        mimetype="application/json",
+        headers=cors_headers(),
+    )
