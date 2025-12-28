@@ -25,81 +25,69 @@
     <h1>تقييم الخدمة</h1>
     <p class="subtitle">نرجو منك تقييم تجربتك معنا</p>
 
-    <div id="form-content">
-      <label for="case_no_display">رقم الحالة / البلاغ</label>
-      <input type="text" id="case_no_display" readonly />
+    <!-- ✅ IMPORTANT: This is the Azure Function endpoint -->
+    <form id="feedbackForm"
+          method="POST"
+          action="https://feedback-api-fehfehe9crg8cfea.uaenorth-01.azurewebsites.net/api/submit_feedback">
 
-      <input type="hidden" id="case_no" />
+      <div id="form-content">
+        <label for="case_no_display">رقم الحالة / البلاغ</label>
+        <input type="text" id="case_no_display" readonly />
 
-      <label for="is_resolved">هل تم حل المشكلة؟</label>
-      <select id="is_resolved" required>
-        <option value="">اختر من القائمة</option>
-        <option value="Yes">نعم</option>
-        <option value="No">لا</option>
-      </select>
+        <!-- ✅ Sent to Function -->
+        <input type="hidden" name="case_no" id="case_no" />
 
-      <button id="submitBtn" type="button">إرسال التقييم</button>
-      <!-- <div class="small">سيتم إرسال التقييم بأمان دون الحاجة إلى VPN.</div> -->
-    </div>
+        <!-- ✅ Return URL to come back to same page -->
+        <input type="hidden" name="return_url" id="return_url" />
 
-    <div id="success-box" class="msg ok">✔ شكراً لمساعدتنا في تحسين خدماتنا!</div>
-    <div id="error-box" class="msg err"></div>
+        <label for="is_resolved">هل تم حل المشكلة؟</label>
+        <select name="is_resolved" id="is_resolved" required>
+          <option value="">اختر من القائمة</option>
+          <option value="Yes">نعم</option>
+          <option value="No">لا</option>
+        </select>
+
+        <button id="submitBtn" type="submit">إرسال التقييم</button>
+        <!-- <div class="small">سيتم إرسال التقييم بأمان دون الحاجة إلى VPN.</div> -->
+      </div>
+
+      <div id="success-box" class="msg ok">✔ شكراً لمساعدتنا في تحسين خدماتنا!</div>
+      <div id="error-box" class="msg err"></div>
+    </form>
   </div>
 
 <script>
 (function () {
-  // ====== CONFIG ======
-  var AZURE_FUNCTION_URL ="https://feedback-api-fehfehe9crg8cfea.uaenorth-01.azurewebsites.net/api/submit_feedback";
-
-
-  // Read ?case_no= from URL
+  // Read params
   var params = new URLSearchParams(window.location.search);
   var caseNo = params.get("case_no") || "";
+  var sent = params.get("sent") || "";   // sent=1 means success, sent=0 means fail
 
-  document.getElementById("case_no_display").value = caseNo;
-  document.getElementById("case_no").value = caseNo;
-
-  var btn = document.getElementById("submitBtn");
+  // Fill fields
+  var display = document.getElementById("case_no_display");
+  var hiddenCase = document.getElementById("case_no");
+  var returnUrl = document.getElementById("return_url");
   var formContent = document.getElementById("form-content");
   var successBox = document.getElementById("success-box");
   var errorBox = document.getElementById("error-box");
 
-  function showError(msg) {
-    errorBox.textContent = msg;
-    errorBox.style.display = "block";
+  if (display) display.value = caseNo;
+  if (hiddenCase) hiddenCase.value = caseNo;
+
+  // Return back to same page (keep case_no)
+  var baseReturn = window.location.origin + window.location.pathname + "?case_no=" + encodeURIComponent(caseNo);
+  if (returnUrl) returnUrl.value = baseReturn;
+
+  // Show success/fail after redirect
+  if (sent === "1") {
+    if (formContent) formContent.style.display = "none";
+    if (successBox) successBox.style.display = "block";
+  } else if (sent === "0") {
+    if (errorBox) {
+      errorBox.textContent = "تعذر إرسال التقييم حالياً. حاول مرة أخرى لاحقاً.";
+      errorBox.style.display = "block";
+    }
   }
-
-  btn.addEventListener("click", function () {
-    errorBox.style.display = "none";
-    errorBox.textContent = "";
-
-    var isResolved = document.getElementById("is_resolved").value;
-
-    if (!caseNo) return showError("رقم الحالة غير موجود في الرابط (case_no).");
-    if (!isResolved) return showError("من فضلك اختر (نعم/لا).");
-
-    btn.disabled = true;
-    btn.textContent = "جاري الإرسال...";
-
-    fetch(AZURE_FUNCTION_URL, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ case_no: caseNo, is_resolved: isResolved })
-    })
-    .then(function (r) {
-      if (!r.ok) return r.text().then(function(t){ throw new Error(t || "Request failed"); });
-      return r.json();
-    })
-    .then(function () {
-      formContent.style.display = "none";
-      successBox.style.display = "block";
-    })
-    .catch(function () {
-      btn.disabled = false;
-      btn.textContent = "إرسال التقييم";
-      showError("تعذر إرسال التقييم حالياً. حاول مرة أخرى لاحقاً.");
-    });
-  });
 })();
 </script>
 </body>

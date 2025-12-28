@@ -1,43 +1,33 @@
-import json
 import os
 import time
 import uuid
 import azure.functions as func
 from azure.data.tables import TableServiceClient
+from urllib.parse import urlencode
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-def _cors_headers():
-    # حتى لو ما صار preflight، نرجّع CORS في الرد النهائي
-    origin = os.environ.get("CORS_ORIGIN", "*")
-    return {
-        "Access-Control-Allow-Origin": origin,
-    }
-
 @app.route(route="submit_feedback", methods=["POST"])
 def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
-    # ✅ Read from form (FormData)
+    # Read form fields (from <form>)
     case_no = (req.form.get("case_no") or "").strip()
     is_resolved = (req.form.get("is_resolved") or "").strip()
+    return_url = (req.form.get("return_url") or "").strip()
 
     if not case_no or is_resolved not in ("Yes", "No"):
-        return func.HttpResponse(
-            json.dumps({"ok": False, "error": "Invalid data"}),
-            status_code=400,
-            mimetype="application/json",
-            headers=_cors_headers(),
-        )
+        # Redirect back with sent=0 (optional)
+        location = return_url or "https://zealous-mud-06328ed0f.1.azurestaticapps.net/"
+        sep = "&" if "?" in location else "?"
+        return func.HttpResponse(status_code=302, headers={"Location": f"{location}{sep}sent=0"})
 
+    # Save to Azure Table
     conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
     table_name = os.environ.get("FEEDBACK_TABLE", "CustomerFeedback")
 
     if not conn:
-        return func.HttpResponse(
-            json.dumps({"ok": False, "error": "Missing AZURE_STORAGE_CONNECTION_STRING"}),
-            status_code=500,
-            mimetype="application/json",
-            headers=_cors_headers(),
-        )
+        location = return_url or "https://zealous-mud-06328ed0f.1.azurestaticapps.net/"
+        sep = "&" if "?" in location else "?"
+        return func.HttpResponse(status_code=302, headers={"Location": f"{location}{sep}sent=0"})
 
     service = TableServiceClient.from_connection_string(conn)
     table = service.get_table_client(table_name)
@@ -52,9 +42,7 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
         "created_at": int(time.time()),
     })
 
-    return func.HttpResponse(
-        json.dumps({"ok": True}),
-        status_code=200,
-        mimetype="application/json",
-        headers=_cors_headers(),
-    )
+    # Redirect back to static page with sent=1
+    location = return_url or "https://zealous-mud-06328ed0f.1.azurestaticapps.net/"
+    sep = "&" if "?" in location else "?"
+    return func.HttpResponse(status_code=302, headers={"Location": f"{location}{sep}sent=1"})
