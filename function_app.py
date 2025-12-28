@@ -3,31 +3,35 @@ import time
 import uuid
 import azure.functions as func
 from azure.data.tables import TableServiceClient
-from urllib.parse import urlencode
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 @app.route(route="submit_feedback", methods=["POST"])
 def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
-    # Read form fields (from <form>)
+    # Read from HTML <form>
     case_no = (req.form.get("case_no") or "").strip()
     is_resolved = (req.form.get("is_resolved") or "").strip()
     return_url = (req.form.get("return_url") or "").strip()
 
-    if not case_no or is_resolved not in ("Yes", "No"):
-        # Redirect back with sent=0 (optional)
-        location = return_url or "https://zealous-mud-06328ed0f.1.azurestaticapps.net/"
-        sep = "&" if "?" in location else "?"
-        return func.HttpResponse(status_code=302, headers={"Location": f"{location}{sep}sent=0"})
+    # Prepare redirect back
+    base_redirect = return_url or "https://zealous-mud-06328ed0f.1.azurestaticapps.net/"
+    sep = "&" if "?" in base_redirect else "?"
 
-    # Save to Azure Table
+    if not case_no or is_resolved not in ("Yes", "No"):
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": f"{base_redirect}{sep}sent=0"}
+        )
+
+    # Read connection string ONLY from environment
     conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
     table_name = os.environ.get("FEEDBACK_TABLE", "CustomerFeedback")
 
     if not conn:
-        location = return_url or "https://zealous-mud-06328ed0f.1.azurestaticapps.net/"
-        sep = "&" if "?" in location else "?"
-        return func.HttpResponse(status_code=302, headers={"Location": f"{location}{sep}sent=0"})
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": f"{base_redirect}{sep}sent=0"}
+        )
 
     service = TableServiceClient.from_connection_string(conn)
     table = service.get_table_client(table_name)
@@ -42,7 +46,8 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
         "created_at": int(time.time()),
     })
 
-    # Redirect back to static page with sent=1
-    location = return_url or "https://zealous-mud-06328ed0f.1.azurestaticapps.net/"
-    sep = "&" if "?" in location else "?"
-    return func.HttpResponse(status_code=302, headers={"Location": f"{location}{sep}sent=1"})
+    # ✅ Success → redirect back to static page
+    return func.HttpResponse(
+        status_code=302,
+        headers={"Location": f"{base_redirect}{sep}sent=1"}
+    )
