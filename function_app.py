@@ -7,40 +7,25 @@ from azure.data.tables import TableServiceClient
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-def _cors():
+def _cors_headers():
+    # حتى لو ما صار preflight، نرجّع CORS في الرد النهائي
     origin = os.environ.get("CORS_ORIGIN", "*")
     return {
         "Access-Control-Allow-Origin": origin,
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Access-Control-Max-Age": "86400",
     }
 
-@app.route(route="submit_feedback", methods=["POST", "OPTIONS"])
+@app.route(route="submit_feedback", methods=["POST"])
 def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
-    # Preflight
-    if req.method == "OPTIONS":
-        return func.HttpResponse("", status_code=204, headers=_cors())
-
-    try:
-        data = req.get_json()
-    except Exception:
-        return func.HttpResponse(
-            json.dumps({"ok": False, "error": "Invalid JSON"}),
-            status_code=400,
-            mimetype="application/json",
-            headers=_cors()
-        )
-
-    case_no = (data.get("case_no") or "").strip()
-    is_resolved = (data.get("is_resolved") or "").strip()
+    # ✅ Read from form (FormData)
+    case_no = (req.form.get("case_no") or "").strip()
+    is_resolved = (req.form.get("is_resolved") or "").strip()
 
     if not case_no or is_resolved not in ("Yes", "No"):
         return func.HttpResponse(
             json.dumps({"ok": False, "error": "Invalid data"}),
             status_code=400,
             mimetype="application/json",
-            headers=_cors()
+            headers=_cors_headers(),
         )
 
     conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
@@ -51,7 +36,7 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps({"ok": False, "error": "Missing AZURE_STORAGE_CONNECTION_STRING"}),
             status_code=500,
             mimetype="application/json",
-            headers=_cors()
+            headers=_cors_headers(),
         )
 
     service = TableServiceClient.from_connection_string(conn)
@@ -71,5 +56,5 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
         json.dumps({"ok": True}),
         status_code=200,
         mimetype="application/json",
-        headers=_cors()
+        headers=_cors_headers(),
     )
