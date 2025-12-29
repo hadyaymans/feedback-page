@@ -1,16 +1,18 @@
 import os
 import time
 import uuid
+import logging
 from urllib.parse import parse_qs
+
 import azure.functions as func
 from azure.data.tables import TableServiceClient
-import logging
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-@app.route(route="submit_feedback")
+@app.route(route="submit_feedback", methods=["POST"])
 def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info('Python HTTP trigger function processed a request.')
+    logging.info("submit_feedback called")
+
     body = req.get_body().decode("utf-8", errors="ignore")
     data = parse_qs(body)
 
@@ -21,14 +23,21 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
     base_redirect = return_url or "https://zealous-mud-06328ed0f.1.azurestaticapps.net/"
     sep = "&" if "?" in base_redirect else "?"
 
+    # Validate
     if not case_no or is_resolved not in ("Yes", "No"):
-        return func.HttpResponse(status_code=200, headers={"Location": f"{base_redirect}{sep}sent=0"})
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": f"{base_redirect}{sep}sent=0"}
+        )
 
     conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
     table_name = os.environ.get("FEEDBACK_TABLE", "CustomerFeedback")
 
     if not conn:
-        return func.HttpResponse(status_code=200, headers={"Location": f"{base_redirect}{sep}sent=0"})
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": f"{base_redirect}{sep}sent=0"}
+        )
 
     service = TableServiceClient.from_connection_string(conn)
     table = service.get_table_client(table_name)
@@ -43,20 +52,7 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
         "created_at": int(time.time()),
     })
 
-    name = req.params.get('name')
-    if not name:
-        try:
-            req_body = req.get_json()
-        except ValueError:
-            pass
-        else:
-            name = req_body.get('name')
-
-    if name:
-        return func.HttpResponse(f"Hello, {name}. This HTTP triggered function executed successfully.")
-    else:
-    #     return func.HttpResponse(
-    #          "This HTTP triggered function executed successfully. Pass a name in the query string or in the request body for a personalized response.",
-    #          status_code=200
-    #     )
-        return func.HttpResponse(status_code=200, headers={"Location": f"{base_redirect}{sep}sent=1"})
+    return func.HttpResponse(
+        status_code=302,
+        headers={"Location": f"{base_redirect}{sep}sent=1"}
+    )
