@@ -36,7 +36,7 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
     table.create_table_if_not_exists()
 
     table.create_entity({
-        "PartitionKey": "feedback",
+        "PartitionKey": "feedback", 
         "RowKey": f"{int(time.time())}-{uuid.uuid4().hex}",
         "case_no": case_no,
         "is_resolved": is_resolved,
