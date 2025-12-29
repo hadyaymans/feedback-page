@@ -7,7 +7,7 @@ from azure.data.tables import TableServiceClient
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-@app.route(route="submit_feedback", methods=["POST"])
+@app.route(route="http_trigger", methods=["POST"])
 def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
     body = req.get_body().decode("utf-8", errors="ignore")
     data = parse_qs(body)
