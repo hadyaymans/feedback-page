@@ -6,7 +6,7 @@ import azure.functions as func
 from azure.data.tables import TableServiceClient
 import logging
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS) 
 
 @app.route(route="submit_feedback", methods=["POST"])
 def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
