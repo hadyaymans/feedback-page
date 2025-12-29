@@ -16,7 +16,7 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
     data = parse_qs(body)
 
     case_no = (data.get("case_no", [""])[0]).strip()
-    is_resolved = (data.get("is_resolved", [""])[0]).strip()
+    is_resolved = (data.get("is_resolved", [""])[0]).strip() 
     return_url = (data.get("return_url", [""])[0]).strip()
 
     base_redirect = return_url or "https://zealous-mud-06328ed0f.1.azurestaticapps.net/"
