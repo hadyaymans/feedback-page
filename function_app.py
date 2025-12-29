@@ -22,7 +22,7 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
     sep = "&" if "?" in base_redirect else "?"
 
     if not case_no or is_resolved not in ("Yes", "No"):
-        return func.HttpResponse(status_code=302, headers={"Location": f"{base_redirect}{sep}sent=0"})
+        return func.HttpResponse(status_code=200, headers={"Location": f"{base_redirect}{sep}sent=0"})
 
     conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
     table_name = os.environ.get("FEEDBACK_TABLE", "CustomerFeedback")
@@ -54,9 +54,9 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
 
     if name:
         return func.HttpResponse(f"Hello, {name}. This HTTP triggered function executed successfully.")
-    # else:
+    else:
     #     return func.HttpResponse(
     #          "This HTTP triggered function executed successfully. Pass a name in the query string or in the request body for a personalized response.",
     #          status_code=200
     #     )
-    return func.HttpResponse(status_code=200, headers={"Location": f"{base_redirect}{sep}sent=1"})
+        return func.HttpResponse(status_code=200, headers={"Location": f"{base_redirect}{sep}sent=1"})
