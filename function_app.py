@@ -5,7 +5,7 @@ import logging
 from urllib.parse import parse_qs
 
 import azure.functions as func
-# from azure.data.tables import TableServiceClient
+from azure.data.tables import TableServiceClient
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
