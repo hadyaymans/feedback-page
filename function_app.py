@@ -7,7 +7,7 @@ import logging
 from urllib.parse import parse_qs
 
 import azure.functions as func
-# import requests
+import requests
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
