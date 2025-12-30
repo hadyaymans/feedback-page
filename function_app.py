@@ -72,7 +72,21 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
         with urllib.request.urlopen(req2, timeout=10) as resp:
             status = resp.status
             if status not in (201, 204):
-                return func.HttpResponse(status_code=302, headers={"Location": f"{base_redirect}{sep}sent=0"})
+                return func.HttpResponse(
+                    status_code=302,
+                    headers={"Location": f"{base_redirect}{sep}sent=0"}
+                )
+
+        # ✅ SUCCESS: redirect back to the static page with sent=1
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": f"{base_redirect}{sep}sent=1"}
+        )
+
     except Exception as e:
         logging.exception("Queue push exception: %s", e)
-        return func.HttpResponse(status_code=302, headers={"Location": f"{base_redirect}{sep}sent=0"})
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": f"{base_redirect}{sep}sent=0"}
+        )
+
