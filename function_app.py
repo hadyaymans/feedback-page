@@ -7,7 +7,7 @@ import logging
 from urllib.parse import parse_qs
 
 import azure.functions as func
-import requests
+import urllib.request
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -63,12 +63,16 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
 """
 
     try:
-        r = requests.post(url, data=xml_body.encode("utf-8"), headers=headers, timeout=10)
-        if r.status_code not in (201, 204):
-            logging.error("Queue push failed: %s %s", r.status_code, r.text[:500])
-            return func.HttpResponse(status_code=302, headers={"Location": f"{base_redirect}{sep}sent=0"})
+        req2 = urllib.request.Request(
+            url,
+            data=xml_body.encode("utf-8"),
+            headers=headers,
+            method="POST"
+        )
+        with urllib.request.urlopen(req2, timeout=10) as resp:
+            status = resp.status
+            if status not in (201, 204):
+                return func.HttpResponse(status_code=302, headers={"Location": f"{base_redirect}{sep}sent=0"})
     except Exception as e:
         logging.exception("Queue push exception: %s", e)
         return func.HttpResponse(status_code=302, headers={"Location": f"{base_redirect}{sep}sent=0"})
-
-    return func.HttpResponse(status_code=302, headers={"Location": f"{base_redirect}{sep}sent=1"})
