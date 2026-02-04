@@ -9,29 +9,35 @@ import urllib.request
 
 import azure.functions as func
 
+# Azure SDK imports
 from azure.data.tables import TableClient
+from azure.data.tables import TableServiceClient
 from azure.core.exceptions import ResourceExistsError
+from azure.identity import DefaultAzureCredential
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-
-# ---------------------------------------------------
-# Prevent duplicate feedback using Table Storage
-# ---------------------------------------------------
+# -------------------------------
+# Table Storage dedup using Managed Identity
+# -------------------------------
 def mark_case_once(case_no: str) -> bool:
+    """
+    Returns True if case inserted for first time.
+    Returns False if duplicate.
+    """
 
     try:
-
-        account = os.environ.get("STORAGE_ACCOUNT_NAME")
         table_name = os.environ.get("TABLE_NAME")
-        sas = os.environ.get("TABLE_SAS")
+        account = os.environ.get("STORAGE_ACCOUNT_NAME")
 
-        if not account or not table_name or not sas:
-            logging.error("Table env variables missing")
-            return True
+        if not table_name or not account:
+            logging.error("Missing Table Storage env variables")
+            return True  # allow request to proceed
 
-        table_url = f"https://{account}.table.core.windows.net/{table_name}{sas}"
-        table = TableClient.from_table_url(table_url)
+        # Use Managed Identity credential
+        credential = DefaultAzureCredential()
+        table_url = f"https://{account}.table.core.windows.net/{table_name}"
+        table = TableClient(endpoint=table_url, table_name=table_name, credential=credential)
 
         entity = {
             "PartitionKey": "feedback",
@@ -43,20 +49,23 @@ def mark_case_once(case_no: str) -> bool:
         return True
 
     except ResourceExistsError:
+        # Duplicate case_no
         return False
 
     except Exception as e:
         logging.exception("Table check failed: %s", e)
-        return True
+        return True  # allow queue push in case of Table failure
 
-# ---------------------------------------------------
+
+# -------------------------------
 # Main Function
-# ---------------------------------------------------
+# -------------------------------
 @app.route(route="submit_feedback", methods=["POST"])
 def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
 
-    logging.info("submit_feedback (queue) called")
+    logging.info("submit_feedback called")
 
+    # Parse x-www-form-urlencoded body
     body = req.get_body().decode("utf-8", errors="ignore")
     data = parse_qs(body)
 
@@ -75,7 +84,7 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
             headers={"Location": f"{base_redirect}{sep}sent=0"}
         )
 
-    # ---------------- Duplicate Protection ----------------
+    # ---------------- Dedup Check ----------------
     if not mark_case_once(case_no):
         logging.info("Duplicate feedback blocked for %s", case_no)
         return func.HttpResponse(
@@ -83,45 +92,44 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
             headers={"Location": f"{base_redirect}{sep}sent=0&duplicate=1"}
         )
 
-    # ---------------- Queue Config ----------------
+    # ---------------- Queue Push ----------------
     account = os.environ.get("STORAGE_ACCOUNT_NAME")
     queue_name = os.environ.get("QUEUE_NAME")
-    sas = os.environ.get("QUEUE_SAS")
 
-    if not account or not queue_name or not sas:
-        logging.error("Missing queue environment variables")
+    if not account or not queue_name:
+        logging.error("Missing Queue env variables")
         return func.HttpResponse(
             status_code=302,
             headers={"Location": f"{base_redirect}{sep}sent=0"}
         )
 
-    # ---------------- Build Queue Message ----------------
-    msg = {
-        "id": uuid.uuid4().hex,
-        "case_no": case_no,
-        "is_resolved": is_resolved,
-        "created_at": int(time.time()),
-    }
+    # Use Managed Identity for Queue SAS-free
+    try:
+        # Generate a SharedKeyAuth token for the Queue or use a library like azure-storage-queue
+        # Here we keep simple using SAS if you still prefer
+        queue_sas = os.environ.get("QUEUE_SAS", "")  # Optional if using Managed Identity for Queue
+        url = f"https://{account}.queue.core.windows.net/{queue_name}/messages{queue_sas}"
 
-    msg_text = base64.b64encode(
-        json.dumps(msg, ensure_ascii=False).encode("utf-8")
-    ).decode("utf-8")
+        msg = {
+            "id": uuid.uuid4().hex,
+            "case_no": case_no,
+            "is_resolved": is_resolved,
+            "created_at": int(time.time()),
+        }
 
-    url = f"https://{account}.queue.core.windows.net/{queue_name}/messages{sas}"
+        msg_text = base64.b64encode(json.dumps(msg, ensure_ascii=False).encode("utf-8")).decode("utf-8")
 
-    headers = {
-        "x-ms-version": "2017-11-09",
-        "Content-Type": "application/xml"
-    }
-
-    xml_body = f"""<?xml version="1.0" encoding="utf-8"?>
+        xml_body = f"""<?xml version="1.0" encoding="utf-8"?>
 <QueueMessage>
   <MessageText>{msg_text}</MessageText>
 </QueueMessage>
 """
 
-    # ---------------- Send To Queue ----------------
-    try:
+        headers = {
+            "x-ms-version": "2017-11-09",
+            "Content-Type": "application/xml"
+        }
+
         req2 = urllib.request.Request(
             url,
             data=xml_body.encode("utf-8"),
@@ -133,14 +141,14 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
             if resp.status not in (201, 204):
                 raise Exception("Queue push failed")
 
+        # ✅ Success
         return func.HttpResponse(
             status_code=302,
             headers={"Location": f"{base_redirect}{sep}sent=1"}
         )
 
     except Exception as e:
-        logging.exception("Queue push exception: %s", e)
-
+        logging.exception("Queue push failed: %s", e)
         return func.HttpResponse(
             status_code=302,
             headers={"Location": f"{base_redirect}{sep}sent=0"}
