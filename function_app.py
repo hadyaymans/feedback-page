@@ -9,6 +9,8 @@ import urllib.request
 
 import azure.functions as func
 
+from azure.data.tables import TableClient
+from azure.core.exceptions import ResourceExistsError
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -19,8 +21,6 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 def mark_case_once(case_no: str) -> bool:
 
     try:
-        from azure.data.tables import TableClient
-        from azure.core.exceptions import ResourceExistsError
 
         account = os.environ.get("STORAGE_ACCOUNT_NAME")
         table_name = os.environ.get("TABLE_NAME")
