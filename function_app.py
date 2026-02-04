@@ -5,17 +5,53 @@ import base64
 import uuid
 import logging
 from urllib.parse import parse_qs
+import urllib.request
 
 import azure.functions as func
-import urllib.request
+from azure.data.tables import TableClient
+from azure.core.exceptions import ResourceExistsError
+
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
+
+# ---------------------------------------------------
+# Prevent duplicate feedback using Table Storage
+# ---------------------------------------------------
+def mark_case_once(case_no: str) -> bool:
+    """
+    Returns True if case is inserted for first time.
+    Returns False if duplicate.
+    """
+
+    account = os.environ.get("STORAGE_ACCOUNT_NAME")
+    table_name = os.environ.get("TABLE_NAME")
+    sas = os.environ.get("TABLE_SAS")
+
+    table_url = f"https://{account}.table.core.windows.net/{table_name}{sas}"
+    table = TableClient.from_table_url(table_url)
+
+    entity = {
+        "PartitionKey": "feedback",
+        "RowKey": case_no,
+        "created_at": int(time.time())
+    }
+
+    try:
+        table.create_entity(entity=entity)
+        return True
+    except ResourceExistsError:
+        return False
+
+
+# ---------------------------------------------------
+# Main Function
+# ---------------------------------------------------
 @app.route(route="submit_feedback", methods=["POST"])
 def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
+
     logging.info("submit_feedback (queue) called")
 
-    # Read x-www-form-urlencoded
     body = req.get_body().decode("utf-8", errors="ignore")
     data = parse_qs(body)
 
@@ -27,18 +63,34 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
     base_redirect = return_url or default_return or "/"
     sep = "&" if "?" in base_redirect else "?"
 
+    # ---------------- Validation ----------------
     if not case_no or is_resolved not in ("Yes", "No"):
-        return func.HttpResponse(status_code=302, headers={"Location": f"{base_redirect}{sep}sent=0"})
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": f"{base_redirect}{sep}sent=0"}
+        )
 
+    # ---------------- Duplicate Protection ----------------
+    if not mark_case_once(case_no):
+        logging.info("Duplicate feedback blocked for %s", case_no)
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": f"{base_redirect}{sep}sent=0&duplicate=1"}
+        )
+
+    # ---------------- Queue Config ----------------
     account = os.environ.get("STORAGE_ACCOUNT_NAME")
     queue_name = os.environ.get("QUEUE_NAME")
-    sas = os.environ.get("QUEUE_SAS")  # must start with "?"
+    sas = os.environ.get("QUEUE_SAS")
 
     if not account or not queue_name or not sas:
-        logging.error("Missing STORAGE_ACCOUNT_NAME / QUEUE_NAME / QUEUE_SAS")
-        return func.HttpResponse(status_code=302, headers={"Location": f"{base_redirect}{sep}sent=0"})
+        logging.error("Missing queue environment variables")
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": f"{base_redirect}{sep}sent=0"}
+        )
 
-    # Build message payload
+    # ---------------- Build Queue Message ----------------
     msg = {
         "id": uuid.uuid4().hex,
         "case_no": case_no,
@@ -46,8 +98,9 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
         "created_at": int(time.time()),
     }
 
-    # Azure Queue requires message text base64 in XML body
-    msg_text = base64.b64encode(json.dumps(msg, ensure_ascii=False).encode("utf-8")).decode("utf-8")
+    msg_text = base64.b64encode(
+        json.dumps(msg, ensure_ascii=False).encode("utf-8")
+    ).decode("utf-8")
 
     url = f"https://{account}.queue.core.windows.net/{queue_name}/messages{sas}"
 
@@ -62,6 +115,7 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
 </QueueMessage>
 """
 
+    # ---------------- Send To Queue ----------------
     try:
         req2 = urllib.request.Request(
             url,
@@ -69,15 +123,11 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
             headers=headers,
             method="POST"
         )
-        with urllib.request.urlopen(req2, timeout=10) as resp:
-            status = resp.status
-            if status not in (201, 204):
-                return func.HttpResponse(
-                    status_code=302,
-                    headers={"Location": f"{base_redirect}{sep}sent=0"}
-                )
 
-        # ✅ SUCCESS: redirect back to the static page with sent=1
+        with urllib.request.urlopen(req2, timeout=10) as resp:
+            if resp.status not in (201, 204):
+                raise Exception("Queue push failed")
+
         return func.HttpResponse(
             status_code=302,
             headers={"Location": f"{base_redirect}{sep}sent=1"}
@@ -85,8 +135,8 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as e:
         logging.exception("Queue push exception: %s", e)
+
         return func.HttpResponse(
             status_code=302,
             headers={"Location": f"{base_redirect}{sep}sent=0"}
         )
-
