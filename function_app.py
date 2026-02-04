@@ -16,38 +16,38 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 # ---------------------------------------------------
 # Prevent duplicate feedback using Table Storage
 # ---------------------------------------------------
-def mark_case_once(case_no: str) -> bool:
+# def mark_case_once(case_no: str) -> bool:
 
-    try:
-        from azure.data.tables import TableClient
-        from azure.core.exceptions import ResourceExistsError
+#     try:
+#         from azure.data.tables import TableClient
+#         from azure.core.exceptions import ResourceExistsError
 
-        account = os.environ.get("STORAGE_ACCOUNT_NAME")
-        table_name = os.environ.get("TABLE_NAME")
-        sas = os.environ.get("TABLE_SAS")
+#         account = os.environ.get("STORAGE_ACCOUNT_NAME")
+#         table_name = os.environ.get("TABLE_NAME")
+#         sas = os.environ.get("TABLE_SAS")
 
-        if not account or not table_name or not sas:
-            logging.error("Table env variables missing")
-            return True
+#         if not account or not table_name or not sas:
+#             logging.error("Table env variables missing")
+#             return True
 
-        table_url = f"https://{account}.table.core.windows.net/{table_name}{sas}"
-        table = TableClient.from_table_url(table_url)
+#         table_url = f"https://{account}.table.core.windows.net/{table_name}{sas}"
+#         table = TableClient.from_table_url(table_url)
 
-        entity = {
-            "PartitionKey": "feedback",
-            "RowKey": case_no,
-            "created_at": int(time.time())
-        }
+#         entity = {
+#             "PartitionKey": "feedback",
+#             "RowKey": case_no,
+#             "created_at": int(time.time())
+#         }
 
-        table.create_entity(entity=entity)
-        return True
+#         table.create_entity(entity=entity)
+#         return True
 
-    except ResourceExistsError:
-        return False
+#     except ResourceExistsError:
+#         return False
 
-    except Exception as e:
-        logging.exception("Table check failed: %s", e)
-        return True
+#     except Exception as e:
+#         logging.exception("Table check failed: %s", e)
+#         return True
 
 # ---------------------------------------------------
 # Main Function
@@ -76,12 +76,12 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     # ---------------- Duplicate Protection ----------------
-    if not mark_case_once(case_no):
-        logging.info("Duplicate feedback blocked for %s", case_no)
-        return func.HttpResponse(
-            status_code=302,
-            headers={"Location": f"{base_redirect}{sep}sent=0&duplicate=1"}
-        )
+    # if not mark_case_once(case_no):
+    #     logging.info("Duplicate feedback blocked for %s", case_no)
+    #     return func.HttpResponse(
+    #         status_code=302,
+    #         headers={"Location": f"{base_redirect}{sep}sent=0&duplicate=1"}
+    #     )
 
     # ---------------- Queue Config ----------------
     account = os.environ.get("STORAGE_ACCOUNT_NAME")
