@@ -4,74 +4,101 @@ import time
 import base64
 import uuid
 import logging
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote
 import urllib.request
 
 import azure.functions as func
 
-# Azure SDK imports
-from azure.data.tables import TableClient
-from azure.data.tables import TableServiceClient
-from azure.core.exceptions import ResourceExistsError
-from azure.identity import DefaultAzureCredential
-
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-# -------------------------------
-# Table Storage dedup using Managed Identity
-# -------------------------------
+
+# ---------------------------------------------------
+# Prevent duplicate feedback using Table Storage REST API
+# ---------------------------------------------------
 def mark_case_once(case_no: str) -> bool:
-    """
-    Returns True if case inserted for first time.
-    Returns False if duplicate.
-    """
-
+    """Check if case already exists in table using REST API"""
     try:
-        table_name = os.environ.get("TABLE_NAME")
         account = os.environ.get("STORAGE_ACCOUNT_NAME")
-
-        if not table_name or not account:
-            logging.error("Missing Table Storage env variables")
-            return True  # allow request to proceed
-
-        # Use Managed Identity credential
-        credential = DefaultAzureCredential()
-        table_url = f"https://{account}.table.core.windows.net/{table_name}"
-        table = TableClient(endpoint=table_url, table_name=table_name, credential=credential)
-
-        entity = {
-            "PartitionKey": "feedback",
-            "RowKey": case_no,
-            "created_at": int(time.time())
-        }
-
-        table.create_entity(entity=entity)
-        return True
-
-    except ResourceExistsError:
-        # Duplicate case_no
-        return False
-
+        table_name = os.environ.get("TABLE_NAME")
+        sas_token = os.environ.get("TABLE_SAS")
+        
+        if not account or not table_name or not sas_token:
+            logging.error("Table environment variables missing")
+            return True
+        
+        # URL for checking if entity exists
+        url = f"https://{account}.table.core.windows.net/{table_name}(PartitionKey='feedback',RowKey='{quote(case_no, safe='')}'){sas_token}"
+        
+        # Try to get the entity
+        req = urllib.request.Request(url, method="GET")
+        req.add_header("Accept", "application/json;odata=nometadata")
+        req.add_header("x-ms-version", "2017-11-09")
+        
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                # Entity exists (status 200)
+                logging.info(f"Case {case_no} already exists in table")
+                return False
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                # Entity doesn't exist, create it
+                create_url = f"https://{account}.table.core.windows.net/{table_name}{sas_token}"
+                
+                entity = {
+                    "PartitionKey": "feedback",
+                    "RowKey": case_no,
+                    "created_at": int(time.time())
+                }
+                
+                headers = {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json;odata=nometadata",
+                    "x-ms-version": "2017-11-09"
+                }
+                
+                create_req = urllib.request.Request(
+                    create_url,
+                    data=json.dumps(entity).encode('utf-8'),
+                    headers=headers,
+                    method="POST"
+                )
+                
+                with urllib.request.urlopen(create_req, timeout=10) as resp:
+                    if resp.status in (200, 201, 204):
+                        logging.info(f"Case {case_no} marked in table")
+                        return True
+                    else:
+                        logging.error(f"Failed to create entity: {resp.status}")
+                        return True
+            else:
+                logging.error(f"HTTP error checking entity: {e.code}")
+                return True
+                
     except Exception as e:
         logging.exception("Table check failed: %s", e)
-        return True  # allow queue push in case of Table failure
+        return True
 
 
-# -------------------------------
+# ---------------------------------------------------
 # Main Function
-# -------------------------------
+# ---------------------------------------------------
 @app.route(route="submit_feedback", methods=["POST"])
 def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("submit_feedback (queue) called")
 
-    logging.info("submit_feedback called")
-
-    # Parse x-www-form-urlencoded body
-    body = req.get_body().decode("utf-8", errors="ignore")
-    data = parse_qs(body)
-
-    case_no = (data.get("case_no", [""])[0]).strip()
-    is_resolved = (data.get("is_resolved", [""])[0]).strip()
-    return_url = (data.get("return_url", [""])[0]).strip()
+    # Parse form data
+    try:
+        body = req.get_body().decode("utf-8", errors="ignore")
+        data = parse_qs(body)
+        
+        case_no = (data.get("case_no", [""])[0]).strip()
+        is_resolved = (data.get("is_resolved", [""])[0]).strip()
+        return_url = (data.get("return_url", [""])[0]).strip()
+    except:
+        return func.HttpResponse(
+            status_code=400,
+            body="Invalid form data"
+        )
 
     default_return = os.environ.get("DEFAULT_RETURN_URL", "")
     base_redirect = return_url or default_return or "/"
@@ -84,7 +111,7 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
             headers={"Location": f"{base_redirect}{sep}sent=0"}
         )
 
-    # ---------------- Dedup Check ----------------
+    # ---------------- Duplicate Protection ----------------
     if not mark_case_once(case_no):
         logging.info("Duplicate feedback blocked for %s", case_no)
         return func.HttpResponse(
@@ -92,44 +119,45 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
             headers={"Location": f"{base_redirect}{sep}sent=0&duplicate=1"}
         )
 
-    # ---------------- Queue Push ----------------
+    # ---------------- Queue Config ----------------
     account = os.environ.get("STORAGE_ACCOUNT_NAME")
     queue_name = os.environ.get("QUEUE_NAME")
+    sas = os.environ.get("QUEUE_SAS")
 
-    if not account or not queue_name:
-        logging.error("Missing Queue env variables")
+    if not account or not queue_name or not sas:
+        logging.error("Missing queue environment variables")
         return func.HttpResponse(
             status_code=302,
             headers={"Location": f"{base_redirect}{sep}sent=0"}
         )
 
-    # Use Managed Identity for Queue SAS-free
-    try:
-        # Generate a SharedKeyAuth token for the Queue or use a library like azure-storage-queue
-        # Here we keep simple using SAS if you still prefer
-        queue_sas = os.environ.get("QUEUE_SAS", "")  # Optional if using Managed Identity for Queue
-        url = f"https://{account}.queue.core.windows.net/{queue_name}/messages{queue_sas}"
+    # ---------------- Build Queue Message ----------------
+    msg = {
+        "id": uuid.uuid4().hex,
+        "case_no": case_no,
+        "is_resolved": is_resolved,
+        "created_at": int(time.time()),
+    }
 
-        msg = {
-            "id": uuid.uuid4().hex,
-            "case_no": case_no,
-            "is_resolved": is_resolved,
-            "created_at": int(time.time()),
-        }
+    msg_text = base64.b64encode(
+        json.dumps(msg, ensure_ascii=False).encode("utf-8")
+    ).decode("utf-8")
 
-        msg_text = base64.b64encode(json.dumps(msg, ensure_ascii=False).encode("utf-8")).decode("utf-8")
+    url = f"https://{account}.queue.core.windows.net/{queue_name}/messages{sas}"
 
-        xml_body = f"""<?xml version="1.0" encoding="utf-8"?>
+    headers = {
+        "x-ms-version": "2017-11-09",
+        "Content-Type": "application/xml"
+    }
+
+    xml_body = f"""<?xml version="1.0" encoding="utf-8"?>
 <QueueMessage>
   <MessageText>{msg_text}</MessageText>
 </QueueMessage>
 """
 
-        headers = {
-            "x-ms-version": "2017-11-09",
-            "Content-Type": "application/xml"
-        }
-
+    # ---------------- Send To Queue ----------------
+    try:
         req2 = urllib.request.Request(
             url,
             data=xml_body.encode("utf-8"),
@@ -139,16 +167,15 @@ def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
 
         with urllib.request.urlopen(req2, timeout=10) as resp:
             if resp.status not in (201, 204):
-                raise Exception("Queue push failed")
+                raise Exception(f"Queue push failed with status {resp.status}")
 
-        # ✅ Success
         return func.HttpResponse(
             status_code=302,
             headers={"Location": f"{base_redirect}{sep}sent=1"}
         )
 
     except Exception as e:
-        logging.exception("Queue push failed: %s", e)
+        logging.exception("Queue push exception: %s", e)
         return func.HttpResponse(
             status_code=302,
             headers={"Location": f"{base_redirect}{sep}sent=0"}
